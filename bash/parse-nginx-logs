@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# Check args
+if [ $# -lt 3 ]; then
+  echo "Usage: $0 <search_string_in_url> <http_status_code> <log_filename> [--count]"
+  exit 1
+fi
+
+# Init vars
+search_string=$1
+http_code=$2
+log_filename=$3
+output_count=false
+
+# check if we're doing a "--count"
+if [ "$4" == "--count" ]; then
+  output_count=true
+fi
+
+# base nginx log path
+log_path="/var/log/nginx"
+
+# append given log filename
+full_log_path="${log_path}/${log_filename}"
+
+# check if given file exists
+if [ ! -f "$full_log_path" ]; then
+  echo "Error: Log file $full_log_path not found!"
+  exit 1
+fi
+
+# check if given file is gzipped or not and change grep accordingly
+if [[ "$log_filename" == *.gz ]]; then
+  grep_command="zgrep"
+else
+  grep_command="grep"
+fi
+
+# read the log based on given args
+log_entries=$($grep_command -P --color=always "$search_string" "$full_log_path" | $grep_command " $http_code ")
+
+# if we're counting per day....
+if [ "$output_count" = true ]; then
+  # grab the date part and count matches per date
+  echo "$log_entries" | awk '{print $4}' | sed 's/\[//;s/:.*//' | sort | uniq -c
+else
+  # output raw log entries
+  echo "$log_entries"
+fi

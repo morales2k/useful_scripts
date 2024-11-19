@@ -1,0 +1,56 @@
+#!/bin/bash
+
+# Default log directory if no log file is provided
+DEFAULT_LOG_DIR="/var/log/apache2"
+
+# Check for required arguments
+if [[ $# -lt 2 ]]; then
+    echo "Usage: $0 <url_string> <http_code> <logfile> [<count_only> (optional)]"
+    exit 1
+fi
+
+# Assign arguments to variables
+url_string="$1"
+http_code="$2"
+log_file="$DEFAULT_LOG_DIR/$3"
+count_only="${4:-false}"  # Default to false if not provided
+echo "$count_only"
+# If no log file is provided
+if [[ -z "$log_file" ]]; then
+    echo "Error: No logfile provided!"
+    exit 1
+fi
+
+# Check if the log file exists
+if [[ ! -f "$log_file" ]]; then
+    echo "Error: Log file '$log_file' not found!"
+    exit 1
+fi
+
+# Determine if the log file is gzipped
+if [[ "$log_file" == *.gz ]]; then
+    grep_cmd="zgrep"  # Use color for zgrep
+else
+    grep_cmd="grep"    # Use color for grep
+fi
+
+# Use flexible search pattern with any part of the URL and exact HTTP status code
+search_pattern=".*$url_string.*\s$http_code\s"
+
+# Get matching lines from the log and directly pipe to terminal (preserve color)
+matches=$($grep_cmd -P "$search_pattern" "$log_file")
+
+# If no matches found, inform the user
+if [[ -z "$matches" ]]; then
+    echo "No matches found for URL '$url_string' with HTTP code '$http_code'."
+    exit 0
+fi
+
+# Optionally count matches per day
+if [[ "$count_only" == "true" ]]; then
+    # Extract the date (day part of the timestamp) and count occurrences per day
+    echo "$matches" | awk -F'[:[]' '{print $2}' | sort | uniq -c
+else
+    # Directly output matching lines without echoing
+    $grep_cmd -P --color=always "$search_pattern" "$log_file"
+fi
