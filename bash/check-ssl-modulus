@@ -1,0 +1,141 @@
+#!/bin/bash
+
+# Color codes with bold
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+BOLD='\033[1m'  # Added bold text style
+NC='\033[0m'  # No color (reset)
+
+# Default values
+CSR_FILE=""
+
+# Function to display usage message
+usage() {
+    echo -e "❌ ${RED}${BOLD}Usage:${NC}${RED} $0 <private_key_file> <certificate_file> [--csr=<path-to-csr-file>]${NC}"
+    exit 1
+}
+
+# Parse command line arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --csr=*)
+            CSR_FILE="${1#*=}"   # Extract the value after '='
+            shift  # Move past the --csr argument
+            ;;
+        *)
+            # Handle positional arguments (private key and certificate)
+            if [[ -z "$PRIVATE_KEY" ]]; then
+                PRIVATE_KEY="$1"
+            elif [[ -z "$CERTIFICATE" ]]; then
+                CERTIFICATE="$1"
+            else
+                usage  # If we have more than two positional args, show usage
+            fi
+            shift  # Move to the next argument
+            ;;
+    esac
+done
+
+# Check if the correct number of arguments is passed
+if [ -z "$PRIVATE_KEY" ] || [ -z "$CERTIFICATE" ]; then
+    usage
+fi
+
+# Check if the private key file exists
+if [ ! -f "$PRIVATE_KEY" ]; then
+  echo -e "❌ ${RED}${BOLD}Error:${NC} ${RED}Private key file '$PRIVATE_KEY' does not exist!${NC}"
+  exit 1
+fi
+
+# Check if the certificate file exists
+if [ ! -f "$CERTIFICATE" ]; then
+  echo -e "❌ ${RED}${BOLD}Error:${NC} ${RED}Certificate file '$CERTIFICATE' does not exist!${NC}"
+  exit 1
+fi
+
+# Check if the CSR file exists (if provided)
+if [ -n "$CSR_FILE" ] && [ ! -f "$CSR_FILE" ]; then
+  echo -e "❌ ${RED}${BOLD}Error:${NC} ${RED}CSR file '$CSR_FILE' does not exist!${NC}"
+  exit 1
+fi
+
+# Step 1: Validate the RSA private key
+echo -e "⏳ ${YELLOW}${BOLD}Validating private key...${NC}"  # Bold yellow for validation message
+openssl rsa -in "$PRIVATE_KEY" -check > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+  echo -e "🎉 ${GREEN}${BOLD}Success:${NC} ${GREEN}Private key is a valid RSA key. (RSA key ok)${NC}"
+else
+  echo -e "🚨 ${RED}${BOLD}Error:${NC} ${RED}Private key is invalid or not an RSA key!${NC}"
+  exit 1
+fi
+
+# Step 2: Extract and compare the modulus of the private key and certificate
+
+# Extract the modulus of the private key
+PRIVATE_KEY_MODULUS=$(openssl rsa -in "$PRIVATE_KEY" -modulus -noout | sed 's/.*=//')
+
+# Extract the modulus of the certificate
+CERTIFICATE_MODULUS=$(openssl x509 -in "$CERTIFICATE" -modulus -noout | sed 's/.*=//')
+
+# Compare the two moduli
+if [ "$PRIVATE_KEY_MODULUS" == "$CERTIFICATE_MODULUS" ]; then
+  echo -e "🎉 ${GREEN}${BOLD}Success:${NC} ${GREEN}The private key and certificate match. Modulus is identical.${NC}"
+else
+  echo -e "🚨 ${RED}${BOLD}Error:${NC} ${RED}The private key and certificate do not match. Modulus mismatch!${NC}"
+  exit 1
+fi
+
+# Step 3: Check CSR if provided and compare its modulus
+
+if [ -n "$CSR_FILE" ]; then
+  echo -e "⏳ ${YELLOW}${BOLD}Validating CSR file...${NC}"
+  # Extract the modulus of the CSR
+  CSR_MODULUS=$(openssl req -in "$CSR_FILE" -modulus -noout | sed 's/.*=//')
+
+  # Compare the CSR modulus with the private key modulus
+  if [ "$PRIVATE_KEY_MODULUS" == "$CSR_MODULUS" ]; then
+    echo -e "🎉 ${GREEN}${BOLD}Success:${NC} ${GREEN}The private key and CSR match. Modulus is identical.${NC}"
+  else
+    echo -e "🚨 ${RED}${BOLD}Error:${NC} ${RED}The private key and CSR do not match. Modulus mismatch!${NC}"
+    exit 1
+  fi
+
+  # Compare the CSR modulus with the certificate modulus
+  if [ "$CERTIFICATE_MODULUS" == "$CSR_MODULUS" ]; then
+    echo -e "🎉 ${GREEN}${BOLD}Success:${NC} ${GREEN}The certificate and CSR match. Modulus is identical.${NC}"
+  else
+    echo -e "🚨 ${RED}${BOLD}Error:${NC} ${RED}The certificate and CSR do not match. Modulus mismatch!${NC}"
+    exit 1
+  fi
+fi
+
+# Step 4: Check if the certificate is expired
+CERT_EXPIRATION_DATE=$(openssl x509 -in "$CERTIFICATE" -noout -enddate | sed 's/.*=//')
+
+if [ $? -ne 0 ]; then
+    echo -e "🚨 ${RED}${BOLD}Error:${NC} ${RED}Failed to retrieve the expiration date of the certificate. It may be an invalid or unreadable certificate.${NC}"
+    exit 1
+fi
+
+# Get the current date in a format for comparison (YYYYMMDD)
+CURRENT_DATE=$(date +%Y%m%d)
+
+# Extract the expiration date in the same format (YYYYMMDD)
+EXPIRATION_DATE=$(date -d "$CERT_EXPIRATION_DATE" +%Y%m%d)
+
+# Compare the expiration date with the current date
+if [ "$EXPIRATION_DATE" -lt "$CURRENT_DATE" ]; then
+  echo -e "🚨 ${RED}${BOLD}Error:${NC} ${RED}The certificate has expired! Expired on: $CERT_EXPIRATION_DATE${NC}"
+  exit 1
+else
+  echo -e "🎉 ${GREEN}${BOLD}Success:${NC} ${GREEN}The certificate is valid and not expired. Expires on: $CERT_EXPIRATION_DATE${NC}"
+fi
+
+# Reset color and print success message
+if [ -n "$CSR_FILE" ]; then
+  echo -e "🆗 ${CYAN}${BOLD}Validation complete. The moduli of the private key, certificate and certificate request provided are a match.${NC}"
+else
+  echo -e "🆗 ${CYAN}${BOLD}Validation complete. The moduli for the private key and the certificate provided are a match.${NC}"
+fi
